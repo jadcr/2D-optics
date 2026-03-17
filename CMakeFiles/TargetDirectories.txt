@@ -1,0 +1,5 @@
+C:/Qt/2D/CMakeFiles/2D_Optics.dir
+C:/Qt/2D/CMakeFiles/edit_cache.dir
+C:/Qt/2D/CMakeFiles/rebuild_cache.dir
+C:/Qt/2D/CMakeFiles/2D_Optics_autogen_timestamp_deps.dir
+C:/Qt/2D/CMakeFiles/2D_Optics_autogen.dir

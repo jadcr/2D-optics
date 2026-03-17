@@ -1,0 +1,656 @@
+#include "mainwindow.h"
+#include "movableitem.h"
+#include "scene.h"
+#include "raytracer.h"
+#include "straightinterface.h"
+#include "sphericalinterface.h"
+#include "detector.h"
+#include "graphicsview.h"
+#include "coordgrid.h"
+#include <QGraphicsLineItem>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QToolBar>
+#include <QDockWidget>
+#include <QListWidget>
+#include <QTabWidget>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QPushButton>
+#include <QGraphicsView>
+#include <QMenuBar>
+#include <QMenu>
+#include <QAction>
+#include <QGraphicsEllipseItem>
+#include <QVariant>
+#include <QPen>
+#include <QPainter>
+#include <qevent.h>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QPushButton>
+#include <QFormLayout>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+    , m_graphicsScene(new QGraphicsScene(this))
+    , m_scene(new Scene())
+    , m_rayTracer(new RayTracer(this))
+    , m_coordinateGrid(nullptr)
+{
+
+    m_hasLastRayParams = false;
+    // Центральный виджет
+    GraphicsView *view = new GraphicsView(this);
+
+    view->setScene(m_graphicsScene);
+    setCentralWidget(view);
+
+
+
+    // Действия
+    QAction *actionAddPlane = new QAction("Добавить плоскость", this);
+    QAction *actionAddSpherical = new QAction("Добавить круг", this);
+    QAction *actionAddDetector = new QAction("Добавить детектор", this);
+    QAction *actionTraceRays = new QAction("Трассировать лучи", this);
+    QAction *actionClearRays = new QAction("Очистить лучи", this);
+    QAction *actionClearAll = new QAction("Очистить всё", this);
+    QAction *actionRemoveElement = new QAction("Удалить элемент", this);
+
+    // Меню
+    QMenu *elementsMenu = menuBar()->addMenu("Элементы");
+    elementsMenu->addAction(actionAddPlane);
+    elementsMenu->addAction(actionAddSpherical);
+    elementsMenu->addAction(actionAddDetector);
+    elementsMenu->addAction(actionRemoveElement);
+
+    QMenu *traceMenu = menuBar()->addMenu("Трассировка");
+    traceMenu->addAction(actionTraceRays);
+    traceMenu->addAction(actionClearRays);
+    traceMenu->addAction(actionClearAll);
+
+    // Панель инструментов
+    QToolBar *toolBar = addToolBar("Инструменты");
+    toolBar->addAction(actionAddPlane);
+    toolBar->addAction(actionAddSpherical);
+    toolBar->addAction(actionAddDetector);
+    toolBar->addSeparator();
+    toolBar->addAction(actionTraceRays);
+    toolBar->addAction(actionClearRays);
+    toolBar->addAction(actionRemoveElement);
+
+    // Док-панель списка элементов
+    QDockWidget *listDock = new QDockWidget("Список элементов", this);
+    listDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    QListWidget *listWidget = new QListWidget(listDock);
+    listDock->setWidget(listWidget);
+    addDockWidget(Qt::LeftDockWidgetArea, listDock);
+
+    // Док-панель свойств
+    QDockWidget *propDock = new QDockWidget("Свойства элемента", this);
+    propDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    QWidget *propWidget = new QWidget(propDock);
+    QVBoxLayout *propLayout = new QVBoxLayout(propWidget);
+
+    QTabWidget *tabWidget = new QTabWidget;
+    propLayout->addWidget(tabWidget);
+
+    // Вкладка "Общие"
+    QWidget *generalTab = new QWidget;
+    QFormLayout *generalForm = new QFormLayout(generalTab);
+    QLineEdit *nameEdit = new QLineEdit;
+    generalForm->addRow("Имя:", nameEdit);
+    QCheckBox *reflectiveCheck = new QCheckBox("Отражающий");
+    generalForm->addRow("Тип:", reflectiveCheck);
+    tabWidget->addTab(generalTab, "Общие");
+
+    // Вкладка "Геометрия"
+    QWidget *geomTab = new QWidget;
+    QFormLayout *geomForm = new QFormLayout(geomTab);
+    QDoubleSpinBox *x1Spin = new QDoubleSpinBox;
+    x1Spin->setRange(-1000, 1000);
+    QDoubleSpinBox *y1Spin = new QDoubleSpinBox;
+    y1Spin->setRange(-1000, 1000);
+    QDoubleSpinBox *x2Spin = new QDoubleSpinBox;
+    x2Spin->setRange(-1000, 1000);
+    QDoubleSpinBox *y2Spin = new QDoubleSpinBox;
+    y2Spin->setRange(-1000, 1000);
+    geomForm->addRow("X1:", x1Spin);
+    geomForm->addRow("Y1:", y1Spin);
+    geomForm->addRow("X2:", x2Spin);
+    geomForm->addRow("Y2:", y2Spin);
+    tabWidget->addTab(geomTab, "Геометрия");
+
+    // Вкладка "Материалы"
+    QWidget *materialTab = new QWidget;
+    QFormLayout *materialForm = new QFormLayout(materialTab);
+    QDoubleSpinBox *n1Spin = new QDoubleSpinBox;
+    n1Spin->setRange(1.0, 10.0);
+    n1Spin->setValue(1.0);
+    QDoubleSpinBox *n2Spin = new QDoubleSpinBox;
+    n2Spin->setRange(1.0, 10.0);
+    n2Spin->setValue(1.5);
+    materialForm->addRow("n1 (среда 1):", n1Spin);
+    materialForm->addRow("n2 (среда 2):", n2Spin);
+    tabWidget->addTab(materialTab, "Материалы");
+
+    // Вкладка "Источник"
+    QWidget *sourceTab = new QWidget;
+    QFormLayout *sourceForm = new QFormLayout(sourceTab);
+
+    QComboBox *sourceTypeCombo = new QComboBox;
+    sourceTypeCombo->addItem("Параллельный пучок");
+    sourceTypeCombo->addItem("Точечный источник");
+    sourceTypeCombo->setObjectName("sourceTypeCombo");
+    sourceForm->addRow("Тип источника:", sourceTypeCombo);
+
+    QDoubleSpinBox *sourceOriginX = new QDoubleSpinBox;
+    sourceOriginX->setRange(-1000, 1000);
+    sourceOriginX->setValue(-80.0);
+    sourceOriginX->setObjectName("sourceOriginX");
+    sourceForm->addRow("Начало X:", sourceOriginX);
+
+    QDoubleSpinBox *sourceOriginY = new QDoubleSpinBox;
+    sourceOriginY->setRange(-1000, 1000);
+    sourceOriginY->setValue(40.0);
+    sourceOriginY->setObjectName("sourceOriginY");
+    sourceForm->addRow("Начало Y:", sourceOriginY);
+
+    QDoubleSpinBox *sourceDirX = new QDoubleSpinBox;
+    sourceDirX->setRange(-1, 1);
+    sourceDirX->setSingleStep(0.1);
+    sourceDirX->setValue(1.0);
+    sourceDirX->setObjectName("sourceDirX");
+    sourceForm->addRow("Направление X:", sourceDirX);
+
+    QDoubleSpinBox *sourceDirY = new QDoubleSpinBox;
+    sourceDirY->setRange(-1, 1);
+    sourceDirY->setSingleStep(0.1);
+    sourceDirY->setValue(0.0);
+    sourceDirY->setObjectName("sourceDirY");
+    sourceForm->addRow("Направление Y:", sourceDirY);
+
+    QSpinBox *sourceRayCount = new QSpinBox;
+    sourceRayCount->setRange(1, 500);
+    sourceRayCount->setValue(20);
+    sourceRayCount->setObjectName("sourceRayCount");
+    sourceForm->addRow("Количество лучей:", sourceRayCount);
+
+    QDoubleSpinBox *sourceSpacing = new QDoubleSpinBox;
+    sourceSpacing->setRange(0.1, 100);
+    sourceSpacing->setValue(5.0);
+    sourceSpacing->setObjectName("sourceSpacing");
+    sourceForm->addRow("Шаг (для пучка):", sourceSpacing);
+
+    QDoubleSpinBox *sourceAngleSpread = new QDoubleSpinBox;
+    sourceAngleSpread->setRange(0, 360);
+    sourceAngleSpread->setValue(30.0);
+    sourceAngleSpread->setObjectName("sourceAngleSpread");
+    sourceForm->addRow("Угловой разброс (град):", sourceAngleSpread);
+
+    QPushButton *applySourceButton = new QPushButton("Применить источник");
+    applySourceButton->setObjectName("applySourceButton");
+    sourceForm->addRow(applySourceButton);
+
+    tabWidget->addTab(sourceTab, "Источник");
+
+    QPushButton *applyButton = new QPushButton("Применить");
+    propLayout->addWidget(applyButton);
+
+    propDock->setWidget(propWidget);
+    addDockWidget(Qt::RightDockWidgetArea, propDock);
+
+    // Установка objectName для доступа
+    listWidget->setObjectName("listWidget");
+    nameEdit->setObjectName("nameEdit");
+    reflectiveCheck->setObjectName("reflectiveCheck");
+    x1Spin->setObjectName("x1Spin");
+    y1Spin->setObjectName("y1Spin");
+    x2Spin->setObjectName("x2Spin");
+    y2Spin->setObjectName("y2Spin");
+    n1Spin->setObjectName("n1Spin");
+    n2Spin->setObjectName("n2Spin");
+    applyButton->setObjectName("applyButton");
+
+    // Подключение сигналов
+    connect(actionAddPlane, &QAction::triggered, this, &MainWindow::on_actionAddPlane_triggered);
+    connect(actionAddSpherical, &QAction::triggered, this, &MainWindow::on_actionAddSpherical_triggered);
+    connect(actionAddDetector, &QAction::triggered, this, &MainWindow::on_actionAddDetector_triggered);
+    connect(actionTraceRays, &QAction::triggered, this, &MainWindow::on_actionTraceRays_triggered);
+    connect(actionClearRays, &QAction::triggered, this, &MainWindow::on_actionClearRays_triggered);
+    connect(actionClearAll, &QAction::triggered, this, &MainWindow::on_actionClearAll_triggered);
+    connect(listWidget, &QListWidget::itemClicked, this, &MainWindow::on_listWidget_itemClicked);
+    connect(applyButton, &QPushButton::clicked, this, &MainWindow::on_applyButton_clicked);
+    connect(actionRemoveElement, &QAction::triggered, this, &MainWindow::on_actionRemoveElement_triggered);
+    QPushButton *applySourceBtn = findChild<QPushButton*>("applySourceButton");
+    if (applySourceBtn) {
+        connect(applySourceBtn, &QPushButton::clicked, this, &MainWindow::on_applySource_clicked);
+    }
+
+    m_rayTracer->setScene(m_scene);
+
+    setupGrid();
+}
+
+MainWindow::~MainWindow()
+{
+    delete m_scene;
+    delete m_coordinateGrid;
+}
+
+void MainWindow::setupGrid()
+{
+    if (m_coordinateGrid) {
+        m_graphicsScene->removeItem(m_coordinateGrid);
+        delete m_coordinateGrid;
+        m_coordinateGrid = nullptr;
+    }
+    m_coordinateGrid = new CoordinateGrid();
+    m_graphicsScene->addItem(m_coordinateGrid);
+}
+
+void MainWindow::on_actionAddPlane_triggered()
+{
+    StraightInterface *plane = new StraightInterface(QPointF(-50, 20), QPointF(50, 20),
+                                                     1.0, 1.5, false, "Плоскость");
+    m_scene->addElement(plane);
+    addElementToScene(plane);
+    regenerateRays();
+    updateElementsList();
+}
+
+void MainWindow::on_actionAddSpherical_triggered()
+{
+    SphericalInterface *sphere = new SphericalInterface(QPointF(0, 0), 30,
+                                                        1.0, 1.5, false, "Круг");
+    m_scene->addElement(sphere);
+    addElementToScene(sphere);
+    regenerateRays();
+    updateElementsList();
+}
+
+void MainWindow::on_actionAddDetector_triggered()
+{
+    Detector *det = new Detector(QPointF(-60, -30), QPointF(60, -30), "Детектор");
+    m_scene->addElement(det);
+    addElementToScene(det);
+    regenerateRays();
+    updateElementsList();
+}
+
+//void MainWindow::addElementToScene(OpticalElement* elem)(старая реализация)
+//{
+//    if (StraightInterface* line = dynamic_cast<StraightInterface*>(elem))
+//    {
+//       item->setPen(QPen(Qt::blue, 2));
+//       item->setData(0, QVariant::fromValue((void*)elem));
+//        m_graphicsScene->addItem(item);
+//    }
+//    else if (SphericalInterface* sphere = dynamic_cast<SphericalInterface*>(elem))
+//    {
+//        QGraphicsEllipseItem *item = new QGraphicsEllipseItem(
+//            sphere->center().x() - sphere->radius(),
+//            sphere->center().y() - sphere->radius(),
+//            sphere->radius() * 2, sphere->radius() * 2);
+//        item->setPen(QPen(Qt::blue, 2));
+//        item->setData(0, QVariant::fromValue((void*)elem));
+//        m_graphicsScene->addItem(item);
+//    }
+//    else if (Detector* det = dynamic_cast<Detector*>(elem))
+//    {
+//        QGraphicsLineItem *item = new QGraphicsLineItem(QLineF(det->p1(), det->p2()));
+//        item->setPen(QPen(Qt::red, 3));
+//        item->setData(0, QVariant::fromValue((void*)elem));
+//        m_graphicsScene->addItem(item);
+//    }
+//}
+
+void MainWindow::addElementToScene(OpticalElement* elem)
+{
+    if (StraightInterface* line = dynamic_cast<StraightInterface*>(elem))
+    {
+        MovableLineItem *item = new MovableLineItem(elem, this,
+                                                    line->p1(), line->p2());
+        m_graphicsScene->addItem(item);
+    }
+    else if (SphericalInterface* sphere = dynamic_cast<SphericalInterface*>(elem))
+    {
+        MovableEllipseItem *item = new MovableEllipseItem(sphere, this,
+                                                          sphere->center(),
+                                                          sphere->radius());
+        m_graphicsScene->addItem(item);
+    }
+    else if (Detector* det = dynamic_cast<Detector*>(elem))
+    {
+        MovableLineItem *item = new MovableLineItem(elem, this,
+                                                    det->p1(), det->p2());
+        m_graphicsScene->addItem(item);
+    }
+}
+
+void MainWindow::updateElementsList()
+{
+    QListWidget *list = findChild<QListWidget*>("listWidget");
+    if (!list) return;
+    list->clear();
+    for (OpticalElement* elem : m_scene->elements())
+    {
+        QListWidgetItem *item = new QListWidgetItem(elem->name());
+        item->setData(Qt::UserRole, QVariant::fromValue((void*)elem));
+        list->addItem(item);
+    }
+}
+
+void MainWindow::on_listWidget_itemClicked(QListWidgetItem* item)
+{
+    m_currentElement = (OpticalElement*)item->data(Qt::UserRole).value<void*>();
+    OpticalElement* elem = (OpticalElement*)item->data(Qt::UserRole).value<void*>();
+    if (!elem) return;
+
+    QLineEdit *nameEdit = findChild<QLineEdit*>("nameEdit");
+    QCheckBox *reflectiveCheck = findChild<QCheckBox*>("reflectiveCheck");
+    QDoubleSpinBox *x1Spin = findChild<QDoubleSpinBox*>("x1Spin");
+    QDoubleSpinBox *y1Spin = findChild<QDoubleSpinBox*>("y1Spin");
+    QDoubleSpinBox *x2Spin = findChild<QDoubleSpinBox*>("x2Spin");
+    QDoubleSpinBox *y2Spin = findChild<QDoubleSpinBox*>("y2Spin");
+    QDoubleSpinBox *n1Spin = findChild<QDoubleSpinBox*>("n1Spin");
+    QDoubleSpinBox *n2Spin = findChild<QDoubleSpinBox*>("n2Spin");
+
+    if (nameEdit) nameEdit->setText(elem->name());
+    if (reflectiveCheck) reflectiveCheck->setChecked(elem->isReflective());
+    if (n1Spin) n1Spin->setValue(elem->n1());
+    if (n2Spin) n2Spin->setValue(elem->n2());
+
+    if (StraightInterface* line = dynamic_cast<StraightInterface*>(elem))
+    {
+        if (x1Spin) { x1Spin->setValue(line->p1().x()); x1Spin->setEnabled(true); }
+        if (y1Spin) { y1Spin->setValue(line->p1().y()); y1Spin->setEnabled(true); }
+        if (x2Spin) { x2Spin->setValue(line->p2().x()); x2Spin->setEnabled(true); }
+        if (y2Spin) { y2Spin->setValue(line->p2().y()); y2Spin->setEnabled(true); }
+    }
+    else if (SphericalInterface* sphere = dynamic_cast<SphericalInterface*>(elem))
+    {
+        if (x1Spin) { x1Spin->setValue(sphere->center().x()); x1Spin->setEnabled(true); }
+        if (y1Spin) { y1Spin->setValue(sphere->center().y()); y1Spin->setEnabled(true); }
+        if (x2Spin) { x2Spin->setValue(sphere->radius()); x2Spin->setEnabled(true); }
+        if (y2Spin) y2Spin->setEnabled(false);
+    }
+    else if (Detector* det = dynamic_cast<Detector*>(elem))
+    {
+        if (x1Spin) { x1Spin->setValue(det->p1().x()); x1Spin->setEnabled(true); }
+        if (y1Spin) { y1Spin->setValue(det->p1().y()); y1Spin->setEnabled(true); }
+        if (x2Spin) { x2Spin->setValue(det->p2().x()); x2Spin->setEnabled(true); }
+        if (y2Spin) { y2Spin->setValue(det->p2().y()); y2Spin->setEnabled(true); }
+    }
+}
+
+void MainWindow::on_applyButton_clicked()
+{
+    QListWidget *list = findChild<QListWidget*>("listWidget");
+    if (!list || !list->currentItem()) return;
+
+    OpticalElement* elem = (OpticalElement*)list->currentItem()->data(Qt::UserRole).value<void*>();
+    if (!elem) return;
+
+    QLineEdit *nameEdit = findChild<QLineEdit*>("nameEdit");
+    QCheckBox *reflectiveCheck = findChild<QCheckBox*>("reflectiveCheck");
+    QDoubleSpinBox *x1Spin = findChild<QDoubleSpinBox*>("x1Spin");
+    QDoubleSpinBox *y1Spin = findChild<QDoubleSpinBox*>("y1Spin");
+    QDoubleSpinBox *x2Spin = findChild<QDoubleSpinBox*>("x2Spin");
+    QDoubleSpinBox *y2Spin = findChild<QDoubleSpinBox*>("y2Spin");
+    QDoubleSpinBox *n1Spin = findChild<QDoubleSpinBox*>("n1Spin");
+    QDoubleSpinBox *n2Spin = findChild<QDoubleSpinBox*>("n2Spin");
+
+    if (nameEdit) elem->setName(nameEdit->text());
+    if (reflectiveCheck) elem->setReflective(reflectiveCheck->isChecked());
+    if (n1Spin) elem->setN1(n1Spin->value());
+    if (n2Spin) elem->setN2(n2Spin->value());
+
+    if (StraightInterface* line = dynamic_cast<StraightInterface*>(elem))
+    {
+        if (x1Spin && y1Spin && x2Spin && y2Spin)
+            line->setPoints(QPointF(x1Spin->value(), y1Spin->value()),
+                            QPointF(x2Spin->value(), y2Spin->value()));
+    }
+    else if (SphericalInterface* sphere = dynamic_cast<SphericalInterface*>(elem))
+    {
+        if (x1Spin && y1Spin && x2Spin)
+        {
+            sphere->setCenter(QPointF(x1Spin->value(), y1Spin->value()));
+            sphere->setRadius(x2Spin->value());
+        }
+    }
+    else if (Detector* det = dynamic_cast<Detector*>(elem))
+    {
+        if (x1Spin && y1Spin && x2Spin && y2Spin)
+            det->setPoints(QPointF(x1Spin->value(), y1Spin->value()),
+                           QPointF(x2Spin->value(), y2Spin->value()));
+    }
+
+    // Очистка графики
+    clearRayGraphics();
+    m_graphicsScene->clear();
+    m_coordinateGrid = nullptr;
+
+    // Пересоздать сетку
+    setupGrid();
+
+    // Заново добавить элементы сцены
+    for (OpticalElement* e : m_scene->elements())
+        addElementToScene(e);
+
+    // Перерисовать лучи
+    regenerateRays();
+
+    // Обновить список элементов
+    updateElementsList();
+}
+
+void MainWindow::on_applySource_clicked()
+{
+    QComboBox *sourceTypeCombo = findChild<QComboBox*>("sourceTypeCombo");
+    QDoubleSpinBox *sourceOriginX = findChild<QDoubleSpinBox*>("sourceOriginX");
+    QDoubleSpinBox *sourceOriginY = findChild<QDoubleSpinBox*>("sourceOriginY");
+    QDoubleSpinBox *sourceDirX = findChild<QDoubleSpinBox*>("sourceDirX");
+    QDoubleSpinBox *sourceDirY = findChild<QDoubleSpinBox*>("sourceDirY");
+    QSpinBox *sourceRayCount = findChild<QSpinBox*>("sourceRayCount");
+    QDoubleSpinBox *sourceSpacing = findChild<QDoubleSpinBox*>("sourceSpacing");
+    QDoubleSpinBox *sourceAngleSpread = findChild<QDoubleSpinBox*>("sourceAngleSpread");
+
+    if (sourceTypeCombo) m_sourceParams.type = sourceTypeCombo->currentIndex();
+    if (sourceOriginX) m_sourceParams.origin.setX(sourceOriginX->value());
+    if (sourceOriginY) m_sourceParams.origin.setY(sourceOriginY->value());
+    if (sourceDirX && sourceDirY) m_sourceParams.direction = QVector2D(sourceDirX->value(), sourceDirY->value());
+    if (sourceRayCount) m_sourceParams.rayCount = sourceRayCount->value();
+    if (sourceSpacing) m_sourceParams.spacing = sourceSpacing->value();
+    if (sourceAngleSpread) m_sourceParams.angleSpread = sourceAngleSpread->value();
+
+
+    updateSourceItemGraphics();
+    generateAndTraceRays();
+}
+
+void MainWindow::on_actionTraceRays_triggered()
+{
+    generateAndTraceRays();
+}
+
+void MainWindow::on_actionClearRays_triggered()
+{
+    m_rayTracer->clearRays();
+    clearRayGraphics();
+    m_hasLastRayParams = false;
+}
+
+void MainWindow::on_actionClearAll_triggered()
+{
+    m_scene->clearElements();
+    m_rayTracer->clearRays();
+    clearRayGraphics();
+    m_graphicsScene->clear();
+    m_coordinateGrid = nullptr;
+
+    setupGrid();
+    m_hasLastRayParams = false;
+    updateElementsList();
+}
+
+void MainWindow::on_actionRemoveElement_triggered()
+{
+    QListWidget *list = findChild<QListWidget*>("listWidget");
+
+    if (!list || !list->currentItem()) return;
+
+    OpticalElement* elem = (OpticalElement*)list->currentItem()->data(Qt::UserRole).value<void*>();
+    if (!elem) return;
+
+    m_scene->removeElement(elem);
+
+    clearRayGraphics();
+\
+    m_graphicsScene->clear();
+    m_coordinateGrid = nullptr;
+
+    setupGrid();
+
+    for (OpticalElement* e : m_scene->elements())
+        addElementToScene(e);
+
+    regenerateRays();
+
+    updateElementsList();
+
+    list->setCurrentItem(nullptr);
+}
+
+void MainWindow::drawRays()
+{
+    clearRayGraphics();
+
+    QPen rayPen(Qt::green, 0.2);
+    for (const Ray& ray : m_rayTracer->rays())
+    {
+        const QList<QPointF>& path = ray.path();
+        for (int i = 0; i < path.size() - 1; ++i)
+        {
+            QGraphicsLineItem *line = new QGraphicsLineItem(QLineF(path[i], path[i+1]));
+            line->setPen(rayPen);
+            m_graphicsScene->addItem(line);
+            m_rayGraphicsItems.append(line);
+        }
+    }
+}
+
+void MainWindow::regenerateRays()
+{
+    if (m_hasLastRayParams)
+        generateAndTraceRays();
+}
+
+void MainWindow::generateAndTraceRays() {
+    m_rayTracer->clearRays();
+    clearRayGraphics();
+
+
+
+    if (!m_sourceItem) {
+        createSourceItem();
+    } else {
+        m_sourceItem->setPos(m_sourceParams.origin);
+    }
+
+
+    if (m_sourceParams.type == 0) { // параллельный пучок
+        double xStart = m_sourceParams.origin.x();
+        double yStart = m_sourceParams.origin.y();
+        double spacing = m_sourceParams.spacing;
+        QVector2D dir = m_sourceParams.direction.normalized();
+        for (int i = 0; i < m_sourceParams.rayCount; ++i) {
+            double y = yStart - i * spacing;
+            Ray ray(QPointF(xStart, y), dir);
+            m_rayTracer->addRay(ray);
+        }
+    } else { // точечный источник
+        QPointF origin = m_sourceParams.origin;
+        double angleSpread = m_sourceParams.angleSpread * M_PI / 180.0;
+        double startAngle = -angleSpread/2;
+        double step = (m_sourceParams.rayCount > 1) ? angleSpread/(m_sourceParams.rayCount-1) : 0;
+        for (int i = 0; i < m_sourceParams.rayCount; ++i) {
+            double angle = startAngle + i * step;
+            QVector2D dir(qCos(angle), qSin(angle));
+            Ray ray(origin, dir);
+            m_rayTracer->addRay(ray);
+        }
+    }
+    m_rayTracer->traceAll(50);
+    m_hasLastRayParams = true;
+}
+
+void MainWindow::clearRayGraphics()
+{
+    for (QGraphicsItem* item : m_rayGraphicsItems)
+    {
+        m_graphicsScene->removeItem(item);
+        delete item;
+    }
+    m_rayGraphicsItems.clear();
+
+}
+
+void MainWindow::createSourceItem()
+{
+    m_sourceItem = new MovableSourceItem(this, m_sourceParams.origin);
+    m_graphicsScene->addItem(m_sourceItem);
+}
+
+void MainWindow::sourceMoved(const QPointF& newPos)
+{
+    m_sourceParams.origin = newPos;
+
+    QDoubleSpinBox* originX = findChild<QDoubleSpinBox*>("sourceOriginX");
+    QDoubleSpinBox* originY = findChild<QDoubleSpinBox*>("sourceOriginY");
+    if (originX) originX->setValue(newPos.x());
+    if (originY) originY->setValue(newPos.y());
+
+    regenerateRays();
+}
+
+void MainWindow::updateSourceItemGraphics()
+{
+    if (m_sourceItem) {
+        m_sourceItem->update(); // перерисовать
+    }
+}
+
+void MainWindow::elementMoved(OpticalElement* element)
+{
+
+    regenerateRays();
+
+    if (element == m_currentElement) {
+        QDoubleSpinBox *x1Spin = findChild<QDoubleSpinBox*>("x1Spin");
+        QDoubleSpinBox *y1Spin = findChild<QDoubleSpinBox*>("y1Spin");
+        QDoubleSpinBox *x2Spin = findChild<QDoubleSpinBox*>("x2Spin");
+        QDoubleSpinBox *y2Spin = findChild<QDoubleSpinBox*>("y2Spin");
+        if (!x1Spin) return;
+
+        if (auto* line = dynamic_cast<StraightInterface*>(element)) {
+            x1Spin->setValue(line->p1().x());
+            y1Spin->setValue(line->p1().y());
+            x2Spin->setValue(line->p2().x());
+            y2Spin->setValue(line->p2().y());
+        } else if (auto* sphere = dynamic_cast<SphericalInterface*>(element)) {
+            x1Spin->setValue(sphere->center().x());
+            y1Spin->setValue(sphere->center().y());
+            x2Spin->setValue(sphere->radius());
+
+        } else if (auto* det = dynamic_cast<Detector*>(element)) {
+            x1Spin->setValue(det->p1().x());
+            y1Spin->setValue(det->p1().y());
+            x2Spin->setValue(det->p2().x());
+            y2Spin->setValue(det->p2().y());
+        }
+    }
+}
